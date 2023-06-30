@@ -10,5 +10,6 @@ evdev = { git = "https://github.com/emberian/evdev.git", rev = "4c2b3196ab9ccf00
 ] }
 glam = "0.24.1"
 loga = "0.1.3"
+manual_future = "0.1.1"
 taskmanager = "0.1.2"
 tokio = { version = "1.29.0", features = ["rt"] }
