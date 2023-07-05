@@ -3,10 +3,6 @@ use std::{
         create_dir_all,
         read_dir,
     },
-    ffi::{
-        OsStr,
-        OsString,
-    },
     os::unix::prelude::OsStrExt,
     collections::HashMap,
     time::Duration,
@@ -32,16 +28,15 @@ use tokio::{
     process::Child,
 };
 
-trait OsStrMissing {
-    fn ends_with(&self, s: &[u8]) -> bool;
-}
+mod re {
+    use structre::structre;
 
-impl OsStrMissing for OsStr {
-    fn ends_with(&self, s: &[u8]) -> bool {
-        if self.len() < s.len() {
-            return false;
-        }
-        return &self.as_bytes()[self.len() - s.len() .. self.len()] == s;
+    #[structre("^(?P<path>.*):(?P<configuration>\\d)\\.(?P<interface>\\d+)(?P<suffix>__.*)$")]
+    pub struct UsbPathParts {
+        pub path: String,
+        pub configuration: usize,
+        pub interface: usize,
+        pub suffix: String,
     }
 }
 
@@ -54,31 +49,15 @@ enum DevType {
 fn find_groupings(
     want_keys: usize,
     want_pads: usize,
-    mut values: Vec<OsString>,
-) -> Result<Vec<Vec<(DevType, OsString)>>, loga::Error> {
+    mut values: Vec<(DevType, String)>,
+) -> Result<Vec<Vec<(DevType, String)>>, loga::Error> {
     values.sort();
-    let mut working = vec![];
-    for value in values {
-        let value = if value.as_os_str().ends_with("__keys".as_bytes()) {
-            (DevType::Keys, value)
-        } else if value.as_os_str().ends_with("__pad".as_bytes()) {
-            (DevType::Pad, value)
-        } else {
-            return Err(
-                loga::err_with(
-                    "Device that doesn't match type suffix found in dev dir",
-                    ea!(dev = value.to_string_lossy()),
-                ),
-            );
-        };
-        working.push(value);
-    }
     let mut groups = vec![];
-    while working.len() > 0 {
+    while values.len() > 0 {
         let mut keys_count = 0usize;
         let mut pads_count = 0usize;
         let mut ok_until = 0;
-        for (i, (type_, _)) in working.iter().enumerate() {
+        for (i, (type_, _)) in values.iter().enumerate() {
             match type_ {
                 DevType::Keys => {
                     keys_count += 1;
@@ -96,16 +75,13 @@ fn find_groupings(
             return Err(
                 loga::err_with(
                     "Encountered device type with no config",
-                    ea!(
-                        type_ = working.get(0).unwrap().0.dbg_str(),
-                        device = working.get(0).unwrap().1.to_string_lossy()
-                    ),
+                    ea!(type_ = values.get(0).unwrap().0.dbg_str(), device = values.get(0).unwrap().1),
                 ),
             );
         }
-        let new_working = working.split_off(ok_until);
-        groups.push(working.split_off(0));
-        working = new_working;
+        let new_working = values.split_off(ok_until);
+        groups.push(values.split_off(0));
+        values = new_working;
     }
     return Ok(groups);
 }
@@ -142,9 +118,10 @@ async fn main() {
             let log = log.clone();
             let tm = tm.clone();
             let event_transmit = event_transmit.clone();
+            let usb_parts_re = re::UsbPathPartsFromRegex::new();
             async move {
                 let log = &log;
-                let mut procs: HashMap<Vec<(DevType, OsString)>, Child> = HashMap::new();
+                let mut procs: HashMap<Vec<(DevType, String)>, Child> = HashMap::new();
                 create_dir_all(&args.dev_dir).log_context(log, "Failed to ensure dev node dir")?;
 
                 // Debounce loop - outer waits forever, ignore first event + subsequent events
@@ -179,7 +156,9 @@ async fn main() {
                         }
                         match read_dir(&args.dev_dir) {
                             Ok(devices) => {
-                                let mut device_list = vec![];
+                                // Take highest numbered node from each device (pads, then high numbered
+                                // keyboards). Only use one node per device.
+                                let mut device_collection = HashMap::new();
                                 for device in devices {
                                     let device = match device {
                                         Ok(d) => d,
@@ -188,8 +167,51 @@ async fn main() {
                                             continue;
                                         },
                                     };
-                                    device_list.push(device.file_name());
+                                    let file_name = match String::from_utf8(device.file_name().as_bytes().to_vec()) {
+                                        Ok(f) => f,
+                                        Err(e) => {
+                                            log.warn_e(
+                                                e.into(),
+                                                "Couldn't parse device path from utf8",
+                                                ea!(device = device.file_name().to_string_lossy()),
+                                            );
+                                            continue;
+                                        },
+                                    };
+                                    let parts = match usb_parts_re.parse(&file_name) {
+                                        Ok(p) => p,
+                                        Err(e) => {
+                                            log.warn(
+                                                "Couldn't parse usb path parts from device name",
+                                                ea!(err = e.to_string(), device = file_name),
+                                            );
+                                            continue;
+                                        },
+                                    };
+                                    let type_ = match parts.suffix.as_str() {
+                                        "__pad" => DevType::Pad,
+                                        "__keys" => DevType::Keys,
+                                        _ => {
+                                            log.warn(
+                                                "Unrecognized device type suffix",
+                                                ea!(device = file_name, suffix = parts.suffix),
+                                            );
+                                            continue;
+                                        },
+                                    };
+                                    device_collection
+                                        .entry(parts.path)
+                                        .or_insert_with(Vec::new)
+                                        .push(((type_, parts.configuration, parts.interface), file_name));
                                 }
+                                let mut device_list = vec![];
+                                for (_, mut v) in device_collection {
+                                    v.sort();
+                                    let best = v.pop().unwrap();
+                                    device_list.push((best.0.0, best.1));
+                                }
+
+                                // Group into virtual devices
                                 let mut new_procs = HashMap::new();
                                 let mut pre_new_procs = vec![];
                                 for group in find_groupings(
@@ -231,15 +253,18 @@ async fn main() {
                                 procs = new_procs;
                                 for group in pre_new_procs {
                                     log.info("Launching trackjoy", ea!(group = group.dbg_str()));
-                                    let mut c = tokio::process::Command::new("trackjoy");
-                                    c.arg(config_source.as_os_str());
+
+                                    //. let mut c = tokio::process::Command::new("trackjoy");
+                                    let mut c = tokio::process::Command::new("cat");
+
+                                    //. c.arg(config_source.as_os_str());
                                     for (type_, path) in &group {
                                         match type_ {
                                             DevType::Keys => {
-                                                c.arg("keys");
+                                                //. c.arg("keys");
                                             },
                                             DevType::Pad => {
-                                                c.arg("pad");
+                                                //. c.arg("pad");
                                             },
                                         }
                                         c.arg(path);
