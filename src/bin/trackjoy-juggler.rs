@@ -1,11 +1,11 @@
 use std::{
     fs::{
-        create_dir_all,
         read_dir,
     },
     os::unix::prelude::OsStrExt,
     collections::HashMap,
     time::Duration,
+    path::Path,
 };
 use aargvark::vark;
 use futures::{
@@ -16,6 +16,10 @@ use loga::{
     ea,
     fatal,
     DebugDisplay,
+};
+use memmem::{
+    TwoWaySearcher,
+    Searcher,
 };
 use notify::{
     RecommendedWatcher,
@@ -31,7 +35,7 @@ use tokio::{
 mod re {
     use structre::structre;
 
-    #[structre("^(?P<path>.*):(?P<configuration>\\d)\\.(?P<interface>\\d+)(?P<suffix>__.*)$")]
+    #[structre("^(?P<path>.*):(?P<configuration>\\d)\\.(?P<interface>\\d+)(?P<suffix>-([a-z-]+))$")]
     pub struct UsbPathParts {
         pub path: String,
         pub configuration: usize,
@@ -87,7 +91,6 @@ fn find_groupings(
 }
 
 mod args {
-    use std::path::PathBuf;
     use aargvark::{
         Aargvark,
         AargvarkJson,
@@ -97,7 +100,6 @@ mod args {
     #[derive(Aargvark)]
     pub struct Args {
         pub config: AargvarkJson<Config>,
-        pub dev_dir: PathBuf,
     }
 }
 
@@ -122,16 +124,18 @@ async fn main() {
             async move {
                 let log = &log;
                 let mut procs: HashMap<Vec<(DevType, String)>, Child> = HashMap::new();
-                create_dir_all(&args.dev_dir).log_context(log, "Failed to ensure dev node dir")?;
 
                 // Debounce loop - outer waits forever, ignore first event + subsequent events
                 // until a timeout, then go back to waiting forever
+                const DEV_DIR: &'static str = "/dev/input/by-path";
                 let mut watcher = RecommendedWatcher::new(move |res: Result<Event, notify::Error>| {
                     block_on(async {
                         _ = event_transmit.send(res.map(|_| ())).await;
                     })
                 }, notify::Config::default()).log_context(log, "Failed to configure dev node watcher")?;
-                watcher.watch(&args.dev_dir, RecursiveMode::NonRecursive).log_context(log, "Error starting watch")?;
+                watcher
+                    .watch(Path::new(DEV_DIR), RecursiveMode::NonRecursive)
+                    .log_context(log, "Error starting watch")?;
                 'event_loop: while let Some(Some(_)) = tm.if_alive(event_receive.recv()).await {
                     while let Some(timeout_res) =
                         tm.if_alive(tokio::time::timeout(Duration::from_millis(1000), event_receive.recv())).await {
@@ -154,7 +158,7 @@ async fn main() {
                                 // Timeout elapsed
                             },
                         }
-                        match read_dir(&args.dev_dir) {
+                        match read_dir(DEV_DIR) {
                             Ok(devices) => {
                                 // Take highest numbered node from each device (pads, then high numbered
                                 // keyboards). Only use one node per device.
@@ -180,24 +184,37 @@ async fn main() {
                                     };
                                     let parts = match usb_parts_re.parse(&file_name) {
                                         Ok(p) => p,
-                                        Err(e) => {
-                                            log.warn(
-                                                "Couldn't parse usb path parts from device name",
-                                                ea!(err = e.to_string(), device = file_name),
-                                            );
+                                        Err(_) => {
                                             continue;
                                         },
                                     };
-                                    let type_ = match parts.suffix.as_str() {
-                                        "__pad" => DevType::Pad,
-                                        "__keys" => DevType::Keys,
-                                        _ => {
-                                            log.warn(
-                                                "Unrecognized device type suffix",
-                                                ea!(device = file_name, suffix = parts.suffix),
-                                            );
+                                    let type_ = if parts.suffix.ends_with("-mouse") {
+                                        let attrs =
+                                            match std::process::Command::new("udevadm")
+                                                .arg("info")
+                                                .arg("--attribute-walk")
+                                                .arg(device.path())
+                                                .output() {
+                                                Ok(o) => o,
+                                                Err(e) => {
+                                                    log.warn_e(
+                                                        e.into(),
+                                                        "Error getting sysfs attrs of device",
+                                                        ea!(device = file_name),
+                                                    );
+                                                    continue;
+                                                },
+                                            };
+                                        if TwoWaySearcher::new("DRIVERS==\"hid-multitouch\"".as_bytes())
+                                            .search_in(&attrs.stdout)
+                                            .is_none() {
                                             continue;
-                                        },
+                                        }
+                                        DevType::Pad
+                                    } else if parts.suffix.ends_with("kbd") {
+                                        DevType::Keys
+                                    } else {
+                                        continue;
                                     };
                                     device_collection
                                         .entry(parts.path)
@@ -253,18 +270,15 @@ async fn main() {
                                 procs = new_procs;
                                 for group in pre_new_procs {
                                     log.info("Launching trackjoy", ea!(group = group.dbg_str()));
-
-                                    //. let mut c = tokio::process::Command::new("trackjoy");
-                                    let mut c = tokio::process::Command::new("cat");
-
-                                    //. c.arg(config_source.as_os_str());
+                                    let mut c = tokio::process::Command::new("trackjoy");
+                                    c.arg(config_source.as_os_str());
                                     for (type_, path) in &group {
                                         match type_ {
                                             DevType::Keys => {
-                                                //. c.arg("keys");
+                                                c.arg("keys");
                                             },
                                             DevType::Pad => {
-                                                //. c.arg("pad");
+                                                c.arg("pad");
                                             },
                                         }
                                         c.arg(path);
@@ -287,6 +301,7 @@ async fn main() {
                                 log.warn_e(e.into(), "Failed to list devices", ea!());
                             },
                         };
+                        break;
                     }
                 }
                 return Ok(()) as Result<(), loga::Error>;
