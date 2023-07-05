@@ -1,0 +1,34 @@
+{
+    "pad_mappings": [
+        {
+            "axes": [
+                "ABS_X",
+                "ABS_Y"
+            ],
+            "buttons": [
+                "BTN_EAST",
+                "BTN_SOUTH",
+                "BTN_START",
+                "BTN_SELECT"
+            ]
+        }
+    ],
+    "keys_mappings": [
+        {
+            "KEY_NUMLOCK": "BTN_TRIGGER_HAPPY1",
+            "KEY_KP4": "BTN_TRIGGER_HAPPY2",
+            "KEY_KP8": "BTN_TRIGGER_HAPPY3",
+            "KEY_KP7": "BTN_TRIGGER_HAPPY4",
+            "KEY_KPSLASH": "BTN_TL",
+            "KEY_KPASTERISK": "BTN_TL2",
+            "KEY_KP5": "BTN_TR",
+            "KEY_KP6": "BTN_TR2",
+            "KEY_KP9": "BTN_SELECT",
+            "KEY_KP0": "BTN_WEST",
+            "KEY_KPDOT": "BTN_NORTH",
+            "KEY_KP1": "BTN_SOUTH",
+            "KEY_KP2": "BTN_EAST",
+            "KEY_KP3": "BTN_START"
+        }
+    ]
+}

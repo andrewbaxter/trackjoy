@@ -1,6 +1,9 @@
-use std::sync::{
-    Mutex,
-    Arc,
+use std::{
+    sync::{
+        Mutex,
+        Arc,
+    },
+    collections::HashSet,
 };
 use evdev::{
     Device,
@@ -14,54 +17,38 @@ use evdev::{
 };
 use glam::Vec2;
 use loga::{
-    ea,
     ResultContext,
 };
 use manual_future::ManualFuture;
 use taskmanager::TaskManager;
-use crate::data::{
-    DEST_HALF,
-    DEST_MAX,
-};
+use crate::trackjoycore::data::DEST_MAX;
+use super::data::DEST_HALF;
 
 const BUTTON_COUNT: usize = 4;
 
 pub fn build(
     tm: &TaskManager,
     source: Device,
+    axis_codes: [AbsoluteAxisCode; 2],
+    button_codes: [KeyCode; 4],
     dest: ManualFuture<Arc<Mutex<VirtualDevice>>>,
-    dest_buttons: &mut Vec<KeyCode>,
+    dest_buttons: &mut HashSet<KeyCode>,
     dest_axes: &mut Vec<AbsoluteAxisCode>,
-    available_buttons: &mut Vec<KeyCode>,
-    available_axes: &mut Vec<AbsoluteAxisCode>,
     active_high: f32,
     active_low: f32,
     curve: f32,
     y_smash: f32,
 ) -> Result<(), loga::Error> {
     // Allocate buttons/axes
-    if available_buttons.len() < BUTTON_COUNT {
-        return Err(loga::Error::new("Ran out of availble buttons, too many keyboards/trackpads", ea!()));
+    for c in &button_codes {
+        dest_buttons.insert(*c);
     }
-    let button_codes: [KeyCode; 4] =
-        available_buttons.split_off(available_buttons.len() - BUTTON_COUNT).try_into().unwrap();
-    dest_buttons.extend_from_slice(&button_codes);
-    let axis_x_code =
-        available_axes
-            .pop()
-            .ok_or_else(|| loga::Error::new("Too many axes for virtual device, try using fewer trackpads", ea!()))?;
-    let axis_y_code =
-        available_axes
-            .pop()
-            .ok_or_else(|| loga::Error::new("Too many axes for virtual device, try using fewer trackpads", ea!()))?;
-    dest_axes.extend_from_slice(&[axis_x_code, axis_y_code]);
+    dest_axes.extend_from_slice(&axis_codes);
 
     // Prep spatial info
-    let source_axes = source.get_abs_state().context("Error getting trackpad absolute state", ea!())?;
-    let source_x_axis =
-        source_axes.get(0).ok_or_else(|| loga::Error::new("Failed to get trackpad x axis info", ea!()))?;
-    let source_y_axis =
-        source_axes.get(1).ok_or_else(|| loga::Error::new("Failed to get trackpad y axis state", ea!()))?;
+    let source_axes = source.get_abs_state().context("Error getting trackpad absolute state")?;
+    let source_x_axis = source_axes.get(0).ok_or_else(|| loga::err("Failed to get trackpad x axis info"))?;
+    let source_y_axis = source_axes.get(1).ok_or_else(|| loga::err("Failed to get trackpad y axis state"))?;
     let source_max = Vec2::new(source_x_axis.maximum as f32, source_y_axis.maximum as f32);
     let source_min = Vec2::new(source_x_axis.minimum as f32, source_y_axis.minimum as f32);
     let source_range_half = (source_max - source_min) / 2.;
@@ -69,7 +56,7 @@ pub fn build(
     let dest_half = Vec2::new(DEST_HALF as f32, DEST_HALF as f32);
 
     // Read and write events
-    let mut source = source.into_event_stream().context("Couldn't make input device async", ea!())?;
+    let mut source = source.into_event_stream().context("Couldn't make input device async")?;
     tm.critical_task::<_, loga::Error>({
         let tm = tm.clone();
         async move {
@@ -191,7 +178,7 @@ pub fn build(
                             .lock()
                             .unwrap()
                             .emit(&dest_events)
-                            .context("Failed to send events to virtual device", ea!())?;
+                            .context("Failed to send events to virtual device")?;
                     }
                     return Ok(());
                 }
@@ -210,8 +197,8 @@ pub fn build(
                 y_smash: y_smash,
                 active_high: active_high,
                 active_low: active_low,
-                axis_x_code: axis_x_code,
-                axis_y_code: axis_y_code,
+                axis_x_code: axis_codes[0],
+                axis_y_code: axis_codes[1],
                 button_codes: button_codes,
                 dest_half: dest_half,
                 source_middle: source_middle,
