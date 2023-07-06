@@ -28,6 +28,7 @@
             "KEY_KPDOT": "BTN_EAST"
         }
     ],
+    "curve": 0.5,
     "width": 2,
     "height": 1.5
 }

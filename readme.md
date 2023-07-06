@@ -1,3 +1,5 @@
+# Configuration
+
 # Calibration
 
 Trackjoy relies on device physical resolution information for making sure movements aren't warped as well as dealing with configuration in physical units (width, height) for portable configs.

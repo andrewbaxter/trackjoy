@@ -34,6 +34,7 @@ pub fn build(
     dest: ManualFuture<Arc<Mutex<VirtualDevice>>>,
     dest_buttons: &mut HashSet<KeyCode>,
     dest_axes: &mut Vec<AbsoluteAxisCode>,
+    multitouch: bool,
     cm_x_radius: Option<f32>,
     cm_y_radius: Option<f32>,
     active_high: f32,
@@ -120,8 +121,11 @@ pub fn build(
                             let mut axis_sum = Vec2::ZERO;
                             let mut axis_sum_count = 0usize;
                             let mut buttons = [false; BUTTON_COUNT];
-                            for state in &mut state.touch_states {
+                            for (state_i, state) in state.touch_states.iter_mut().enumerate() {
                                 if !state.enabled {
+                                    continue;
+                                }
+                                if state_i > 0 && !multitouch {
                                     continue;
                                 }
 
@@ -130,7 +134,7 @@ pub fn build(
                                 let mut unitspace_vec = (state.pos - source_middle) / unit_divisor;
 
                                 // y-space compressed downward (towards 1) with low numbers of y_smash
-                                unitspace_vec.y = ((unitspace_vec.y / 2. + 0.5).powf(y_smash) - 0.5) * 2.;
+                                unitspace_vec.y = ((unitspace_vec.y / 2. + 0.52).clamp(0., 1.1).powf(y_smash) - 0.52) * 2.;
                                 match state.baked {
                                     TouchBake::Indeterminate => {
                                         if unitspace_vec.length() <= 1. {

@@ -77,9 +77,9 @@ async fn main() {
         let config = args.config.value;
 
         // Turn into always positive, at 0 curve is 1
-        let curve = 1.37f32.powf(config.curve.unwrap_or(1.5));
+        let curve = 1.37f32.powf(config.curve.unwrap_or(0.));
         let y_smash = 1.37f32.powf(config.y_smash.unwrap_or(1.));
-        let active_low = config.dead_inner.unwrap_or(0.1);
+        let active_low = config.dead_inner.unwrap_or(0.0);
         let active_high = 1.0 - config.dead_outer.unwrap_or(0.4);
         if active_high - active_low < 0. {
             return Err(loga::err("Dead zones overlap"));
@@ -124,6 +124,7 @@ async fn main() {
                         dest,
                         &mut dest_buttons,
                         &mut dest_axes,
+                        config.multitouch,
                         config.width,
                         config.height,
                         active_high,

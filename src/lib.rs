@@ -25,6 +25,13 @@ pub struct Config {
     /// this list. Codes are strings in this list (ex `"KEY_1"`):
     /// <https://docs.rs/evdev/latest/src/evdev/scancodes.rs.html>
     pub keys_mappings: Vec<HashMap<KeyCode, KeyCode>>,
+    /// Enable multitouch. On my 3rd party USB trackpad sometimes the off events for
+    /// various touches would never come, leading to stuck buttons and axes. You can
+    /// usually fix it by doing multitouch and releasing again (i.e. putting 2nd and
+    /// 3rd fingers down and taking them off again) but it can be disruptive. With this
+    /// off (default) only the first touch is recognized.
+    #[serde(default)]
+    pub multitouch: bool,
     /// Set the pad oval horizontal radius (in centimeters). Otherwise use a circle
     /// with radius of the full span of the smallest axis.
     pub width: Option<f32>,
@@ -39,7 +46,7 @@ pub struct Config {
     pub dead_outer: Option<f32>,
     /// At 0, mapping is linear. Positive numbers mean the joystick moves less near the
     /// center (finer small inputs). Negative numbers means the joystick moves less
-    /// near the edges (more sensitive). Default is -2.
+    /// near the edges (more sensitive). Default is 0.
     pub curve: Option<f32>,
     /// Compresses everything downwards, so smaller downward movements result in larger
     /// downward values, also making the top corner buttons larger. 0 = off, higher =
