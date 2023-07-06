@@ -25,6 +25,12 @@ pub struct Config {
     /// this list. Codes are strings in this list (ex `"KEY_1"`):
     /// <https://docs.rs/evdev/latest/src/evdev/scancodes.rs.html>
     pub keys_mappings: Vec<HashMap<KeyCode, KeyCode>>,
+    /// Set the pad oval horizontal radius (in centimeters). Otherwise use a circle
+    /// with radius of the full span of the smallest axis.
+    pub width: Option<f32>,
+    /// Set the pad oval vertical radius (in centimeters). Otherwise use a circle with
+    /// radius of the full span of the smallest axis.
+    pub height: Option<f32>,
     /// Zero the joystick input if it's less than this percent (as 0-1) of available
     /// space. Defaults to 20.
     pub dead_inner: Option<f32>,

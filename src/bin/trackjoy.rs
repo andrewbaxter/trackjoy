@@ -70,6 +70,7 @@ mod args {
 async fn main() {
     async fn inner() -> Result<(), loga::Error> {
         let tm = taskmanager::TaskManager::new();
+        let log = loga::new(loga::Level::Info);
 
         // # Get and check args
         let args: args::Args = vark();
@@ -94,10 +95,11 @@ async fn main() {
         let mut pad_buttons_i = 0;
         let mut keys_buttons_i = 0;
         for dev in args.devices {
+            let log = log.fork(ea!(device = dev.path.to_string_lossy()));
             let (dest, dest_completer) = ManualFuture::new();
             dest_completers.push(dest_completer);
-            let mut source = Device::open(&dev.path).context("Error opening device")?;
-            source.grab().context("Failed to grab device")?;
+            let mut source = Device::open(&dev.path).log_context(&log, "Error opening device")?;
+            source.grab().log_context(&log, "Failed to grab device")?;
             match dev.device {
                 args::DeviceType::Pad => {
                     let mappings = match config.pad_mappings.get(pad_buttons_i) {
@@ -107,7 +109,7 @@ async fn main() {
                         },
                         None => {
                             return Err(
-                                loga::err_with(
+                                log.new_err_with(
                                     "Config doesn't contain enough button mappings for selected pad devices",
                                     ea!(pad = pad_buttons_i, config_pads = config.pad_mappings.len()),
                                 ),
@@ -122,6 +124,8 @@ async fn main() {
                         dest,
                         &mut dest_buttons,
                         &mut dest_axes,
+                        config.width,
+                        config.height,
                         active_high,
                         active_low,
                         curve,
@@ -135,7 +139,7 @@ async fn main() {
                     },
                     None => {
                         return Err(
-                            loga::err_with(
+                            log.new_err_with(
                                 "Config doesn't contain enough button mappings for selected key devices",
                                 ea!(pad = keys_buttons_i, config_keys = config.keys_mappings.len()),
                             ),
